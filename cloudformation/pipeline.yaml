@@ -1,0 +1,339 @@
+Parameters:
+  CodeArtifactLoginCommand:
+    Description: Command to login to CodeArtifact repository
+    Type: String
+    AllowedPattern: "aws codeartifact login \\-\\-tool npm \\-\\-domain .* \\-\\-domain\\-owner .* \\-\\-repository .*"
+  CodePipelineName:
+    Description: The name of the pipeline to use
+    Type: String
+    # AllowedPattern: '[A-Za-z0-9\\.@\\-_]+'
+    # AllowedPattern: '[A-Za-z0-9.@\\-_]{1,100}'
+
+Resources:
+  BuildRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: "sts:AssumeRole"
+            Effect: "Allow"
+            Principal:
+              Service: "codebuild.amazonaws.com"
+        Version: "2012-10-17"
+  BuildRolePolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Action:
+              - "logs:CreateLogGroup"
+              - "logs:CreateLogStream"
+              - "logs:PutLogEvents"
+            Effect: "Allow"
+            Resource:
+              - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${CodeBuildProject}"
+              - !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${CodeBuildProject}:*"
+          - Action:
+              - "codebuild:CreateReportGroup"
+              - "codebuild:CreateReport"
+              - "codebuild:UpdateReport"
+              - "codebuild:BatchPutTestCases"
+            Effect: "Allow"
+            Resource: !Sub "arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:report-group:/${CodeBuildProject}-*"
+          - Action:
+              - "s3:GetObject*"
+              - "s3:GetBucket*"
+              - "s3:List*"
+              - "s3:DeleteObject*"
+              - "s3:PutObject*"
+              - "s3:Abort*"
+            Effect: "Allow"
+            Resource:
+              - Fn::GetAtt:
+                  - "CodeBuildArtifactBucket"
+                  - "Arn"
+              - Fn::Join:
+                  - ""
+                  - - Fn::GetAtt:
+                        - "CodeBuildArtifactBucket"
+                        - "Arn"
+                    - "/*"
+          - Action:
+              - "kms:Decrypt"
+              - "kms:DescribeKey"
+              - "kms:Encrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+            Effect: "Allow"
+            Resource:
+              Fn::GetAtt:
+                - "BucketEncryptionKey"
+                - "Arn"
+          - Action:
+              - "kms:Decrypt"
+              - "kms:Encrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+            Effect: "Allow"
+            Resource:
+              Fn::GetAtt:
+                - "BucketEncryptionKey"
+                - "Arn"
+          # TODO - limit to specific repositories
+          - Effect: Allow
+            Action:
+            - codeartifact:GetAuthorizationToken
+            - codeartifact:GetRepositoryEndpoint
+            - codeartifact:ReadFromRepository
+            - codeartifact:PublishPackageVersion 
+            Resource: "*"
+          - Effect: Allow
+            Action: sts:GetServiceBearerToken
+            Resource: "*"
+            Condition:
+              StringEquals:
+                sts:AWSServiceName: codeartifact.amazonaws.com
+        Version: "2012-10-17"
+      PolicyName: "BuildRolePolicy"
+      Roles:
+        - Ref: "BuildRole"
+  CodeBuildProject:
+    Type: "AWS::CodeBuild::Project"
+    Properties:
+      Artifacts:
+        Type: "CODEPIPELINE"
+      Environment:
+        ComputeType: "BUILD_GENERAL1_SMALL"
+        Image: "aws/codebuild/standard:5.0"
+        PrivilegedMode: false
+        Type: "LINUX_CONTAINER"
+        EnvironmentVariables:
+          - Name: REPO_DOMAIN_OWNER
+            Value: !Sub "${AWS::AccountId}"
+          - Name: NPM_LOGIN_COMMAND
+            Value: !Ref CodeArtifactLoginCommand
+      ServiceRole:
+        Fn::GetAtt:
+          - "BuildRole"
+          - "Arn"
+      Source:
+        BuildSpec: "project/buildspec.yml"
+        Type: "CODEPIPELINE"
+      EncryptionKey:
+        Fn::GetAtt:
+          - "BucketEncryptionKey"
+          - "Arn"
+
+  CodePipelineRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+  PipelineRolePolicy:
+    Type: "AWS::IAM::Policy"
+    Properties:
+      PolicyName: pipeline-policy
+      Roles:
+        - Ref: "CodePipelineRole"
+      PolicyDocument:
+        Statement:
+          - Action:
+              - codebuild:BatchGetBuilds
+              - codebuild:StartBuild
+            Resource: 
+              - !Sub 
+                - "${CodeBuildProjectArn}"
+                - CodeBuildProjectArn: !GetAtt CodeBuildProject.Arn
+              - !Sub 
+                - "${CodeBuildProjectArn}*"
+                - CodeBuildProjectArn: !GetAtt CodeBuildProject.Arn
+            Effect: Allow
+          - Action: 
+              - 'iam:PassRole'
+            Effect: Allow
+            Resource:
+              - !GetAtt BuildRole.Arn
+          - Effect: Allow
+            Action:
+              - s3:ListBucket
+              - s3:GetBucketVersioning
+            Resource:
+              - !Sub 
+                - "${BucketArn}"
+                - BucketArn: !GetAtt CodeBuildArtifactBucket.Arn
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:PutObject
+              - s3:PutObjectVersion
+            Resource:
+              - !Sub 
+                - "${BucketArn}/*"
+                - BucketArn: !GetAtt CodeBuildArtifactBucket.Arn
+          - Action:
+              - "kms:Decrypt"
+              - "kms:Encrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+            Effect: "Allow"
+            Resource:
+              Fn::GetAtt:
+                - "BucketEncryptionKey"
+                - "Arn"
+        Version: 2012-10-17
+  CodePipeline:
+    Type: 'AWS::CodePipeline::Pipeline'
+    Properties:
+      ArtifactStore:
+        Type: S3
+        Location: !Ref CodeBuildArtifactBucket
+      Name: !Ref CodePipelineName
+      RestartExecutionOnUpdate: true
+      RoleArn: 
+        !GetAtt CodePipelineRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - InputArtifacts: []
+              Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: '1'
+                Provider: S3
+              OutputArtifacts:
+                - Name:  "Source"
+              Configuration:
+                S3Bucket: !Ref CodeBuildArtifactBucket
+                S3ObjectKey: pipeline-artifact.zip
+
+              RunOrder: 1
+        - Name: 'Deploy'
+          Actions:
+            - Name: 'BuildAndDeploy'
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildProject
+                BatchEnabled: false
+              InputArtifacts:
+                - Name: 'Source'
+              RunOrder: 1
+
+  CodeBuildArtifactBucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: true
+            ServerSideEncryptionByDefault:
+              KMSMasterKeyID:
+                Fn::GetAtt:
+                  - "BucketEncryptionKey"
+                  - "Arn"
+              SSEAlgorithm: "aws:kms"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Status: Enabled
+            NoncurrentVersionExpirationInDays: 365
+            NoncurrentVersionTransitions:
+              - StorageClass: STANDARD_IA
+                TransitionInDays: 30
+    # UpdateReplacePolicy: "Retain"
+    # DeletionPolicy: "Retain"
+  ArtifactBucketPolicy:
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket:
+        Ref: "CodeBuildArtifactBucket"
+      PolicyDocument:
+        Statement:
+          - Action:
+              - "s3:GetObject*"
+              - "s3:GetBucket*"
+              - "s3:List*"
+            Effect: "Allow"
+            Principal:
+              AWS:
+                !GetAtt BuildRole.Arn
+            Resource:
+              - Fn::GetAtt:
+                  - "CodeBuildArtifactBucket"
+                  - "Arn"
+              - Fn::Join:
+                  - ""
+                  - - Fn::GetAtt:
+                        - "CodeBuildArtifactBucket"
+                        - "Arn"
+                    - "/*"
+  BucketEncryptionKey:
+    Type: "AWS::KMS::Key"
+    Properties:
+      EnableKeyRotation: true
+      KeyPolicy:
+        Statement:
+          - Action:
+              - "kms:Create*"
+              - "kms:Describe*"
+              - "kms:Enable*"
+              - "kms:List*"
+              - "kms:Put*"
+              - "kms:Update*"
+              - "kms:Revoke*"
+              - "kms:Disable*"
+              - "kms:Get*"
+              - "kms:Delete*"
+              - "kms:ScheduleKeyDeletion"
+              - "kms:CancelKeyDeletion"
+              - "kms:GenerateDataKey"
+              - "kms:TagResource"
+              - "kms:UntagResource"
+              # required to use S3 data keys.
+              - "kms:Decrypt"
+            Effect: "Allow"
+            Principal:
+              AWS:
+                !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+            Resource: "*"
+          - Action:
+              - "kms:Decrypt"
+              - "kms:DescribeKey"
+              - "kms:Encrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+            Effect: "Allow"
+            Principal:
+              AWS:
+                - !GetAtt BuildRole.Arn
+                - !GetAtt CodePipelineRole.Arn
+            Resource: "*"
+    UpdateReplacePolicy: "Delete"
+    DeletionPolicy: "Delete"
+
+Outputs:
+  ArtifactBucket:
+    Description: The artifact bucket
+    Value: !Ref CodeBuildArtifactBucket
+  CodebuildProject:
+    Description: The codebuild
+    Value: !Ref CodeBuildProject

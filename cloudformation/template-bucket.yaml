@@ -1,0 +1,25 @@
+Resources:
+  TemplateBucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - BucketKeyEnabled: true
+            ServerSideEncryptionByDefault:
+              # Use AWS managed key - single account only.
+              SSEAlgorithm: "aws:kms"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+    # UpdateReplacePolicy: "Retain"
+    # DeletionPolicy: "Retain"
+
+Outputs:
+  TemplateBucket:
+    Description: The name of the bucket for cloudformation templates
+    Value: !Ref TemplateBucket
+  TemplateBucketArn:
+    Description: The ARN of the bucket for cloudformation templates
+    Value: !GetAtt TemplateBucket.Arn

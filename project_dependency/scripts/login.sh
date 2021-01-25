@@ -1,0 +1,2 @@
+REPO_DOMAIN_OWNER=`aws sts get-caller-identity --query Account --output text`
+aws codeartifact login --tool npm --domain artifacts-temyers --domain-owner ${REPO_DOMAIN_OWNER} --repository DefaultCodeArtifactRepository-${REPO_DOMAIN_OWNER}

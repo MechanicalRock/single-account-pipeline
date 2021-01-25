@@ -1,0 +1,73 @@
+Parameters:
+  OrganizationId:
+    Description: The organization id for your organization.
+    Type: String
+    AllowedPattern: "o-[a-z0-9A-Z]{9,32}"
+  DomainName:
+    Description: "The domain name to use for CodeArtifact"
+    Type: String
+    AllowedPattern: "[a-z][a-z0-9\\-]{0,48}[a-z0-9]"
+
+Resources:
+  CodeArtifactDomain:
+    Type: 'AWS::CodeArtifact::Domain'
+    Properties:
+      DomainName: !Ref DomainName
+      EncryptionKey: !Ref CodeArtifactKey
+      PermissionsPolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Action:
+              - codeartifact:CreateRepository
+              - codeartifact:UpdateRepository
+              - codeartifact:DescribeRepository
+              - codeartifact:DescribeDomain
+              - codeartifact:GetAuthorizationToken
+              - codeartifact:GetDomainPermissionsPolicy
+              - codeartifact:ListRepositoriesInDomain
+              - codeartifact:TagResource
+              - codeartifact:UntagResource
+              - sts:GetServiceBearerToken
+              Effect: Allow
+              Principal:
+                AWS: !Sub "${AWS::AccountId}"
+              Resource: "*"
+              Condition:
+                StringEquals:
+                  "aws:PrincipalOrgID": !Sub "${OrganizationId}"
+  CodeArtifactKey: 
+    Type: AWS::KMS::Key
+    Properties:
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Id: code-artifact-key
+        Statement:
+        - Sid: Enable IAM User Permissions
+          Effect: Allow
+          Principal:
+            AWS:
+              Fn::Join:
+              - ''
+              - - 'arn:aws:iam::'
+                - Ref: AWS::AccountId
+                - :root
+          Action: kms:*
+          Resource: '*'
+  UpstreamRepository:
+    Type: "AWS::CodeArtifact::Repository"
+    Properties:
+      DomainName: !GetAtt CodeArtifactDomain.Name
+      DomainOwner: !Sub "${AWS::AccountId}"
+      RepositoryName: !Sub "upstream-${AWS::AccountId}"
+      Description: !Sub The default CodeArtifact repository for Account ${AWS::AccountId}
+      ExternalConnections:
+        - "public:npmjs"
+
+Outputs:
+  DomainName:
+    Description: The domain name for CodeArtifact
+    Value: !Ref DomainName
+  UpstreamRepositoryName:
+    Description: The name for the default upstream repostiory, sourcing artifacts from NPM
+    Value: !GetAtt UpstreamRepository.Name

@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Master template for CodeArtifact pipeline.
+Parameters:
+  OrganizationId:
+    Description: The organization id for your organization.
+    Type: String
+    AllowedPattern: "o-[a-z0-9A-Z]{9,32}"
+  DomainName:
+    Description: "The domain name to use for CodeArtifact"
+    Type: String
+    AllowedPattern: "[a-z][a-z0-9\\-]{0,48}[a-z0-9]"
+Resources: 
+  ArtifactDomain:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TimeoutInMinutes: 10  
+      TemplateURL: "./code-artifact-domain.yaml"
+      Parameters:
+        OrganizationId: !Ref OrganizationId
+        DomainName: !Ref DomainName
+
+      
+  ArtifactRepository:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "./code-artifact-repository.yaml"
+      TimeoutInMinutes: 10
+      Parameters:
+        OrganizationId: !Ref OrganizationId
+        DomainName: !Ref DomainName
+        UpstreamRepositoryName: !GetAtt ArtifactDomain.Outputs.UpstreamRepositoryName
+
+  PipelineProject:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "./pipeline.yaml"
+      TimeoutInMinutes: 10
+      Parameters:
+        CodeArtifactLoginCommand: !GetAtt ArtifactRepository.Outputs.ArtifactRepositoryLoginNpmCmd
+        CodePipelineName: !Sub "${AWS::StackName}-pipeline"
+      
+Outputs:
+  ArtifactBucket:
+    Description: The artifact bucket
+    Value: !GetAtt PipelineProject.Outputs.ArtifactBucket
+  CodebuildProject:
+    Description: The codebuild
+    Value: !GetAtt PipelineProject.Outputs.CodebuildProject
+  CodePipelineName:
+    Value: !Sub "${AWS::StackName}-pipeline"
+    Description: Code Pipeline name
+  ArtifactRepositoryName:
+    Description: Name of the artifact repository for code dependencies.
+    Value: !GetAtt ArtifactRepository.Outputs.ArtifactRepositoryName
+  ArtifactRepositoryArn:
+    Description: ARN of the artifact repository for code dependencies.
+    Value: !GetAtt ArtifactRepository.Outputs.ArtifactRepositoryArn
+  ArtifactRepositoryLoginNpmCmd:
+    Description: Command line to login to the artifact repository for npm
+    Value: !GetAtt ArtifactRepository.Outputs.ArtifactRepositoryLoginNpmCmd

@@ -1,0 +1,70 @@
+Parameters:
+  OrganizationId:
+    Description: The organization id for your organization.
+    Type: String
+    AllowedPattern: "o-[a-z0-9A-Z]{9,32}"
+  DomainName:
+    Description: "The domain name to use for CodeArtifact"
+    Type: String
+    AllowedPattern: "[a-z][a-z0-9\\-]{0,48}[a-z0-9]"
+  UpstreamRepositoryName:
+    Description: The name of the upstream repository for external dependencies, e.g. NPM
+    Type: String
+    AllowedPattern: "[A-Za-z0-9][A-Za-z0-9._\\-]{1,99}"
+Metadata:
+  IgnoreUnused: 
+    - !Ref UpstreamRepositoryName
+Resources:
+  DefaultCloudArtifactRepository:
+    Type: "AWS::CodeArtifact::Repository"
+    Properties:
+      DomainName: !Ref DomainName
+      DomainOwner: !Sub "${AWS::AccountId}"
+      RepositoryName: !Sub DefaultCodeArtifactRepository-${AWS::AccountId}
+      Description: !Sub The default CodeArtifact repository for Account ${AWS::AccountId}
+      Upstreams:
+        - !Ref UpstreamRepositoryName
+        # - !Sub "upstream-${AWS::AccountId}"
+      PermissionsPolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: 
+                - !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action:
+              - codeartifact:DescribePackageVersion
+              - codeartifact:DescribeRepository
+              - codeartifact:GetPackageVersionReadme
+              - codeartifact:GetRepositoryEndpoint
+              - codeartifact:ListPackages
+              - codeartifact:ListPackageVersions
+              - codeartifact:ListPackageVersionAssets
+              - codeartifact:ListPackageVersionDependencies
+              - codeartifact:ReadFromRepository
+              - codeartifact:PublishPackageVersion
+              - codeartifact:PutPackageMetadata
+              - codeartifact:TagResource
+              - codeartifact:UntagResource
+            Resource: "*"
+          - Effect: Deny
+            Action: codeartifact:*
+            Principal:
+              AWS: "*"
+            Condition:
+              StringNotEquals:
+                aws:PrincipalOrgId: !Ref OrganizationId
+            Resource: "*"
+
+Outputs:
+  ArtifactRepositoryName:
+    Description: Name of the artifact repository for code dependencies.
+    Value: !GetAtt DefaultCloudArtifactRepository.Name
+  ArtifactRepositoryArn:
+    Description: ARN of the artifact repository for code dependencies.
+    Value: !Ref DefaultCloudArtifactRepository
+  ArtifactRepositoryLoginNpmCmd:
+    Description: Command line to login to the artifact repository for npm
+    Value: !Sub 
+      - "aws codeartifact login --tool npm --domain ${DomainName} --domain-owner ${AWS::AccountId} --repository ${RepoName}"
+      - RepoName: !GetAtt DefaultCloudArtifactRepository.Name

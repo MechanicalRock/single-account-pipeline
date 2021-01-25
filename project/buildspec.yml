@@ -1,0 +1,23 @@
+version: 0.2
+
+# Required environment variables:
+# - NPM_LOGIN_COMMAND - command to login to CodeArtifact repository
+phases:
+  install:
+    runtime-versions:
+      nodejs: 12
+    commands:
+      - pip3 install awscli cfn-lint --upgrade --user
+      - ${NPM_LOGIN_COMMAND}
+  # pre_build:
+  #   commands:
+  #     # Inception stage
+  #     - ./deploy.sh
+  build:
+    commands:
+      - cd project
+      - npm ci
+      - npm test
+  post_build:
+    commands:
+      - npm publish
